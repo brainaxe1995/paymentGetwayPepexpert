@@ -419,11 +419,14 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
      * Build response hash parameters
      *
      * TrustFlowPay includes only specific fields in the response hash, not all fields.
-     * Based on PGH Checkout API documentation and S2S Payin Integration docs:
+     * Based on actual testing and log analysis:
      * - Core transaction identifiers: APP_ID, ORDER_ID, AMOUNT, CURRENCY_CODE, TXNTYPE
      * - Response fields: RESPONSE_CODE, RESPONSE_MESSAGE, RESPONSE_DATE_TIME, STATUS
-     * - Transaction references: TXN_ID, RRN, AUTH_CODE
-     * - Payment details: MOP_TYPE, PAYMENT_TYPE
+     * - Transaction references: TXN_ID, RRN
+     *
+     * IMPORTANT: TrustFlowPay does NOT include AUTH_CODE, MOP_TYPE, PAYMENT_TYPE,
+     * DUPLICATE_YN, or PG_REF_NUM in the response hash calculation, even though
+     * these fields are included in the response payload.
      *
      * Excludes customer info (CUST_*), merchant descriptive fields (MERCHANT_*),
      * and additional metadata fields (CARD_MASK, PG_DESCRIPTOR, etc.)
@@ -441,11 +444,6 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
             'STATUS',
             'TXN_ID',
             'RRN',
-            'AUTH_CODE',
-            'MOP_TYPE',
-            'PAYMENT_TYPE',
-            'DUPLICATE_YN',
-            'PG_REF_NUM',
         );
 
         $filtered_params = array();
