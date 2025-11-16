@@ -71,7 +71,8 @@ function wc_trustflowpay_log( $message, $level = 'info' ) {
 }
 
 /**
- * Redirect/Iframe payment page handler
+ * Redirect payment page handler (for redirect mode only)
+ * Iframe mode is handled directly on the checkout page
  */
 function wc_trustflowpay_redirect_page() {
     $order_id = isset( $_GET['order_id'] ) ? absint( $_GET['order_id'] ) : 0;
@@ -94,6 +95,15 @@ function wc_trustflowpay_redirect_page() {
         wp_die( 'Payment gateway not found', 'TrustFlowPay Payment', array( 'response' => 500 ) );
     }
 
+    $checkout_mode = $gateway->get_option( 'checkout_display_mode', 'redirect' );
+
+    // Iframe mode should not use this redirect page
+    if ( $checkout_mode === 'iframe' ) {
+        wc_trustflowpay_log( 'Redirect page accessed for iframe mode - redirecting to checkout', 'warning' );
+        wp_redirect( wc_get_checkout_url() );
+        exit;
+    }
+
     // Get stored request params
     $request_params_json = $order->get_meta( '_trustflowpay_request_params', true );
 
@@ -103,9 +113,8 @@ function wc_trustflowpay_redirect_page() {
 
     $request_params = json_decode( $request_params_json, true );
     $base_url = $gateway->get_base_url();
-    $checkout_mode = $gateway->get_option( 'checkout_display_mode', 'redirect' );
 
-    wc_trustflowpay_log( 'Rendering payment page for Order #' . $order_id . ' in ' . $checkout_mode . ' mode' );
+    wc_trustflowpay_log( 'Rendering payment redirect page for Order #' . $order_id );
 
     $payment_endpoint = rtrim( $base_url, '/' ) . '/pgui/jsp/paymentrequest';
 
@@ -116,10 +125,6 @@ function wc_trustflowpay_redirect_page() {
         <meta charset="<?php bloginfo( 'charset' ); ?>">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title><?php esc_html_e( 'Processing Payment', 'trustflowpay-gateway' ); ?> - <?php bloginfo( 'name' ); ?></title>
-        <?php if ( $checkout_mode === 'iframe' ) : ?>
-            <link rel="stylesheet" href="<?php echo esc_url( rtrim( $base_url, '/' ) . '/pgui/checkoutlibrary/checkout.min.css' ); ?>">
-            <script src="<?php echo esc_url( rtrim( $base_url, '/' ) . '/pgui/checkoutlibrary/checkout.min.js' ); ?>"></script>
-        <?php endif; ?>
         <style>
             body {
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -165,58 +170,22 @@ function wc_trustflowpay_redirect_page() {
     </head>
     <body>
         <div class="payment-container">
-            <?php if ( $checkout_mode === 'iframe' ) : ?>
-                <h2><?php esc_html_e( 'Enter Your Card Details', 'trustflowpay-gateway' ); ?></h2>
-                <p class="redirect-message"><?php esc_html_e( 'Please complete your payment below. You will be returned to the store after payment.', 'trustflowpay-gateway' ); ?></p>
+            <h2><?php esc_html_e( 'Redirecting to Payment Gateway', 'trustflowpay-gateway' ); ?></h2>
+            <div class="spinner"></div>
+            <p class="redirect-message"><?php esc_html_e( 'Please wait while we redirect you to complete your payment...', 'trustflowpay-gateway' ); ?></p>
 
-                <!-- TrustFlowPay PGH Checkout form - must target checkout-iframe as per integration docs -->
-                <form id="trustflowpay-payment-form" method="post" action="<?php echo esc_url( $payment_endpoint ); ?>" target="checkout-iframe">
-                    <?php foreach ( $request_params as $key => $value ) : ?>
-                        <input type="hidden" name="<?php echo esc_attr( $key ); ?>" value="<?php echo esc_attr( $value ); ?>">
-                    <?php endforeach; ?>
-                </form>
+            <form id="trustflowpay-payment-form" method="post" action="<?php echo esc_url( $payment_endpoint ); ?>">
+                <?php foreach ( $request_params as $key => $value ) : ?>
+                    <input type="hidden" name="<?php echo esc_attr( $key ); ?>" value="<?php echo esc_attr( $value ); ?>">
+                <?php endforeach; ?>
+            </form>
 
-                <!-- Iframe must have ID and name "checkout-iframe" as per TrustFlowPay integration requirements -->
-                <iframe name="checkout-iframe" id="checkout-iframe" style="width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 4px; margin-top: 20px;"></iframe>
-
-                <script>
-                    document.addEventListener('DOMContentLoaded', function() {
-                        var form = document.getElementById('trustflowpay-payment-form');
-
-                        // Check if TrustFlowPay's checkoutSubmitHandler is available
-                        if (typeof checkoutSubmitHandler === 'function') {
-                            try {
-                                // Use TrustFlowPay's submit handler if available
-                                checkoutSubmitHandler(form);
-                            } catch(e) {
-                                console.warn('TrustFlowPay checkoutSubmitHandler error, using fallback:', e);
-                                form.submit();
-                            }
-                        } else {
-                            // Fallback to standard submit if TrustFlowPay JS not loaded
-                            console.info('TrustFlowPay checkout.min.js not loaded, using standard form submit');
-                            form.submit();
-                        }
-                    });
-                </script>
-            <?php else : ?>
-                <h2><?php esc_html_e( 'Redirecting to Payment Gateway', 'trustflowpay-gateway' ); ?></h2>
-                <div class="spinner"></div>
-                <p class="redirect-message"><?php esc_html_e( 'Please wait while we redirect you to complete your payment...', 'trustflowpay-gateway' ); ?></p>
-
-                <form id="trustflowpay-payment-form" method="post" action="<?php echo esc_url( $payment_endpoint ); ?>">
-                    <?php foreach ( $request_params as $key => $value ) : ?>
-                        <input type="hidden" name="<?php echo esc_attr( $key ); ?>" value="<?php echo esc_attr( $value ); ?>">
-                    <?php endforeach; ?>
-                </form>
-
-                <script>
-                    document.addEventListener('DOMContentLoaded', function() {
-                        // Auto-submit the form for redirect
-                        document.getElementById('trustflowpay-payment-form').submit();
-                    });
-                </script>
-            <?php endif; ?>
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    // Auto-submit the form for redirect mode
+                    document.getElementById('trustflowpay-payment-form').submit();
+                });
+            </script>
         </div>
     </body>
     </html>
