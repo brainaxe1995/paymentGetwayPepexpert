@@ -21,7 +21,7 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
         $this->id                 = 'trustflowpay';
         $this->method_title       = __( 'TrustFlowPay', 'trustflowpay-gateway' );
         $this->method_description = __( 'Accept card payments via TrustFlowPay PGH Checkout API (Redirect or Iframe mode)', 'trustflowpay-gateway' );
-        $this->has_fields         = false;
+        $this->has_fields         = true;
         $this->supports           = array( 'products' );
 
         $this->init_form_fields();
@@ -51,6 +51,7 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
         add_action( 'woocommerce_api_wc_gateway_trustflowpay_callback', array( $this, 'handle_webhook' ) );
         add_filter( 'woocommerce_admin_order_actions', array( $this, 'add_order_action' ), 10, 2 );
         add_action( 'admin_post_trustflowpay_check_status', array( $this, 'admin_check_status' ) );
+        add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_checkout_scripts' ) );
     }
 
     /**
@@ -205,6 +206,88 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
     }
 
     /**
+     * Enqueue checkout scripts for iframe mode
+     */
+    public function enqueue_checkout_scripts() {
+        if ( ! is_checkout() || is_order_received_page() ) {
+            return;
+        }
+
+        // Only enqueue if this gateway is enabled
+        if ( 'yes' !== $this->enabled ) {
+            return;
+        }
+
+        // Enqueue TrustFlowPay hosted checkout library for iframe mode
+        if ( $this->checkout_display_mode === 'iframe' ) {
+            wp_enqueue_script(
+                'trustflowpay-hosted',
+                rtrim( $this->base_url, '/' ) . '/pgui/checkoutlibrary/checkout.min.js',
+                array(),
+                null,
+                true
+            );
+            wp_enqueue_style(
+                'trustflowpay-hosted',
+                rtrim( $this->base_url, '/' ) . '/pgui/checkoutlibrary/checkout.min.css',
+                array(),
+                null
+            );
+        }
+
+        // Enqueue custom checkout handler
+        wp_enqueue_script(
+            'trustflowpay-checkout',
+            WC_TRUSTFLOWPAY_PLUGIN_URL . 'assets/js/trustflowpay-checkout.js',
+            array( 'jquery', 'wc-checkout' ),
+            WC_TRUSTFLOWPAY_VERSION,
+            true
+        );
+
+        wp_localize_script(
+            'trustflowpay-checkout',
+            'tfpCheckout',
+            array(
+                'ajax_url' => admin_url( 'admin-ajax.php' ),
+                'mode'     => $this->checkout_display_mode,
+                'base_url' => $this->base_url,
+            )
+        );
+    }
+
+    /**
+     * Payment fields for iframe mode
+     */
+    public function payment_fields() {
+        if ( $this->checkout_display_mode !== 'iframe' ) {
+            echo wpautop( wp_kses_post( $this->description ) );
+            return;
+        }
+
+        ?>
+        <p><?php echo esc_html( $this->description ); ?></p>
+
+        <div id="trustflowpay-iframe-wrapper">
+            <form id="trustflowpay-payment-form"
+                  method="post"
+                  target="trustflowpay-checkout-iframe"
+                  action="<?php echo esc_url( rtrim( $this->base_url, '/' ) . '/pgui/jsp/paymentrequest' ); ?>"
+                  style="display:none;">
+                <!-- Hidden fields will be filled by JS using stored order params -->
+            </form>
+
+            <iframe id="trustflowpay-checkout-iframe"
+                    name="trustflowpay-checkout-iframe"
+                    style="width:100%;height:600px;border:1px solid #ddd;border-radius:4px;margin-top:20px;display:none;"></iframe>
+
+            <div id="trustflowpay-loading" style="text-align:center;padding:40px;">
+                <p><?php esc_html_e( 'Preparing payment form...', 'trustflowpay-gateway' ); ?></p>
+            </div>
+        </div>
+        <?php
+    }
+
+    /**
      * Process payment
      */
     public function process_payment( $order_id ) {
@@ -268,6 +351,17 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
 
         wc_trustflowpay_log( 'Payment request initiated for Order #' . $order_id . ' - ORDER_ID: ' . $internal_order_id . ' - Amount (minor units): ' . $amount_minor );
 
+        // Handle iframe mode differently - stay on checkout page
+        if ( $this->checkout_display_mode === 'iframe' ) {
+            return array(
+                'result'              => 'success',
+                'trustflowpay_mode'   => 'iframe',
+                'order_id'            => $order_id,
+                'trustflowpay_params' => $params,
+            );
+        }
+
+        // Redirect mode - redirect to intermediate page
         return array(
             'result'   => 'success',
             'redirect' => add_query_arg( 'order_id', $order_id, WC()->api_request_url( 'wc_gateway_trustflowpay_redirect' ) ),
