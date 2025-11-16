@@ -23,6 +23,17 @@ define( 'WC_TRUSTFLOWPAY_PLUGIN_FILE', __FILE__ );
 define( 'WC_TRUSTFLOWPAY_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WC_TRUSTFLOWPAY_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
+// Declare HPOS (High-Performance Order Storage) compatibility
+add_action( 'before_woocommerce_init', function() {
+    if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility(
+            'custom_order_tables',
+            __FILE__,
+            true
+        );
+    }
+} );
+
 add_action( 'plugins_loaded', 'wc_trustflowpay_init', 11 );
 
 function wc_trustflowpay_init() {
@@ -146,13 +157,6 @@ function wc_trustflowpay_redirect_page() {
                 0% { transform: rotate(0deg); }
                 100% { transform: rotate(360deg); }
             }
-            #trustflowpay-checkout-frame {
-                width: 100%;
-                height: 600px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                margin-top: 20px;
-            }
             .redirect-message {
                 color: #666;
                 margin: 20px 0;
@@ -165,18 +169,34 @@ function wc_trustflowpay_redirect_page() {
                 <h2><?php esc_html_e( 'Enter Your Card Details', 'trustflowpay-gateway' ); ?></h2>
                 <p class="redirect-message"><?php esc_html_e( 'Please complete your payment below. You will be returned to the store after payment.', 'trustflowpay-gateway' ); ?></p>
 
-                <form id="trustflowpay-payment-form" method="post" action="<?php echo esc_url( $payment_endpoint ); ?>" onsubmit="return checkoutSubmitHandler(this);" target="trustflowpay-checkout-frame">
+                <!-- TrustFlowPay PGH Checkout form - must target checkout-iframe as per integration docs -->
+                <form id="trustflowpay-payment-form" method="post" action="<?php echo esc_url( $payment_endpoint ); ?>" target="checkout-iframe">
                     <?php foreach ( $request_params as $key => $value ) : ?>
                         <input type="hidden" name="<?php echo esc_attr( $key ); ?>" value="<?php echo esc_attr( $value ); ?>">
                     <?php endforeach; ?>
                 </form>
 
-                <iframe name="trustflowpay-checkout-frame" id="trustflowpay-checkout-frame"></iframe>
+                <!-- Iframe must have ID and name "checkout-iframe" as per TrustFlowPay integration requirements -->
+                <iframe name="checkout-iframe" id="checkout-iframe" style="width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 4px; margin-top: 20px;"></iframe>
 
                 <script>
                     document.addEventListener('DOMContentLoaded', function() {
-                        // Auto-submit the form to load TrustFlowPay checkout in iframe
-                        document.getElementById('trustflowpay-payment-form').submit();
+                        var form = document.getElementById('trustflowpay-payment-form');
+
+                        // Check if TrustFlowPay's checkoutSubmitHandler is available
+                        if (typeof checkoutSubmitHandler === 'function') {
+                            try {
+                                // Use TrustFlowPay's submit handler if available
+                                checkoutSubmitHandler(form);
+                            } catch(e) {
+                                console.warn('TrustFlowPay checkoutSubmitHandler error, using fallback:', e);
+                                form.submit();
+                            }
+                        } else {
+                            // Fallback to standard submit if TrustFlowPay JS not loaded
+                            console.info('TrustFlowPay checkout.min.js not loaded, using standard form submit');
+                            form.submit();
+                        }
                     });
                 </script>
             <?php else : ?>
