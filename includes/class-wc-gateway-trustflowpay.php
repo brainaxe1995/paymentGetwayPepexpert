@@ -322,10 +322,64 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
     }
 
     /**
-     * Validate hash from TrustFlowPay
+     * Build response hash parameters
+     *
+     * TrustFlowPay includes only specific fields in the response hash, not all fields.
+     * Based on PGH Checkout API documentation and S2S Payin Integration docs:
+     * - Core transaction identifiers: APP_ID, ORDER_ID, AMOUNT, CURRENCY_CODE, TXNTYPE
+     * - Response fields: RESPONSE_CODE, RESPONSE_MESSAGE, RESPONSE_DATE_TIME, STATUS
+     * - Transaction references: TXN_ID, RRN, AUTH_CODE
+     * - Payment details: MOP_TYPE, PAYMENT_TYPE
+     *
+     * Excludes customer info (CUST_*), merchant descriptive fields (MERCHANT_*),
+     * and additional metadata fields (CARD_MASK, PG_DESCRIPTOR, etc.)
      */
-    public function validate_hash( $params, $received_hash ) {
-        $calculated_hash = $this->generate_hash( $params );
+    protected function build_response_hash_params( $params ) {
+        $hash_fields = array(
+            'APP_ID',
+            'ORDER_ID',
+            'TXNTYPE',
+            'AMOUNT',
+            'CURRENCY_CODE',
+            'RESPONSE_CODE',
+            'RESPONSE_MESSAGE',
+            'RESPONSE_DATE_TIME',
+            'STATUS',
+            'TXN_ID',
+            'RRN',
+            'AUTH_CODE',
+            'MOP_TYPE',
+            'PAYMENT_TYPE',
+            'DUPLICATE_YN',
+            'PG_REF_NUM',
+        );
+
+        $filtered_params = array();
+        foreach ( $hash_fields as $field ) {
+            if ( isset( $params[ $field ] ) && $params[ $field ] !== '' ) {
+                $filtered_params[ $field ] = $params[ $field ];
+            }
+        }
+
+        wc_trustflowpay_log( 'Response hash will use fields: ' . implode( ', ', array_keys( $filtered_params ) ), 'debug' );
+
+        return $filtered_params;
+    }
+
+    /**
+     * Validate hash from TrustFlowPay response
+     *
+     * @param array  $params       Full response parameters from TrustFlowPay
+     * @param string $received_hash Hash value from TrustFlowPay
+     * @param bool   $is_response  True for payment response, false for request validation
+     * @return bool
+     */
+    public function validate_hash( $params, $received_hash, $is_response = true ) {
+        // For responses, filter to only include hash-relevant fields
+        // For requests (status enquiry), use all provided fields
+        $hash_params = $is_response ? $this->build_response_hash_params( $params ) : $params;
+
+        $calculated_hash = $this->generate_hash( $hash_params );
         $is_valid = hash_equals( $calculated_hash, $received_hash );
 
         if ( ! $is_valid ) {
@@ -675,8 +729,9 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
         wc_trustflowpay_log( 'Status enquiry result - RESPONSE_CODE: ' . $status_response_code . ' | STATUS: ' . $status );
 
         // Validate hash if present
+        // Status enquiry responses use the same hash format as payment responses
         if ( $received_hash ) {
-            if ( ! $this->validate_hash( $txn_data, $received_hash ) ) {
+            if ( ! $this->validate_hash( $txn_data, $received_hash, true ) ) {
                 wc_trustflowpay_log( 'Status enquiry hash validation failed', 'error' );
                 $order->add_order_note( __( 'TrustFlowPay status enquiry failed: Invalid hash signature.', 'trustflowpay-gateway' ) );
                 return array(
