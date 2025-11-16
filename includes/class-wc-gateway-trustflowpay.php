@@ -419,14 +419,17 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
      * Build response hash parameters
      *
      * TrustFlowPay includes only specific fields in the response hash, not all fields.
-     * Based on actual testing and log analysis:
-     * - Core transaction identifiers: APP_ID, ORDER_ID, AMOUNT, CURRENCY_CODE, TXNTYPE
-     * - Response fields: RESPONSE_CODE, RESPONSE_MESSAGE, RESPONSE_DATE_TIME, STATUS
-     * - Transaction references: TXN_ID, RRN
+     * Based on testing and common payment gateway patterns, use only core stable fields:
+     * - Merchant/transaction identifiers: APP_ID, ORDER_ID, TXNTYPE
+     * - Amount information: AMOUNT, CURRENCY_CODE
+     * - Result indicators: RESPONSE_CODE, STATUS
+     * - Payment gateway transaction ID: TXN_ID
      *
-     * IMPORTANT: TrustFlowPay does NOT include AUTH_CODE, MOP_TYPE, PAYMENT_TYPE,
-     * DUPLICATE_YN, or PG_REF_NUM in the response hash calculation, even though
-     * these fields are included in the response payload.
+     * EXCLUDED fields that commonly cause hash mismatches:
+     * - RESPONSE_MESSAGE: Can vary in formatting, encoding, or translation
+     * - RESPONSE_DATE_TIME: Timestamp formatting and timezone conversion issues
+     * - RRN: Retrieval Reference Number not always included in hash
+     * - AUTH_CODE, MOP_TYPE, PAYMENT_TYPE, DUPLICATE_YN, PG_REF_NUM: Not in hash
      *
      * Excludes customer info (CUST_*), merchant descriptive fields (MERCHANT_*),
      * and additional metadata fields (CARD_MASK, PG_DESCRIPTOR, etc.)
@@ -439,11 +442,8 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
             'AMOUNT',
             'CURRENCY_CODE',
             'RESPONSE_CODE',
-            'RESPONSE_MESSAGE',
-            'RESPONSE_DATE_TIME',
             'STATUS',
             'TXN_ID',
-            'RRN',
         );
 
         $filtered_params = array();
