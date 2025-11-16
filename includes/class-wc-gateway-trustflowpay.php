@@ -418,7 +418,13 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
     /**
      * Build response hash parameters
      *
-     * TrustFlowPay includes only specific fields in the response hash, not all fields.
+     * NOTE: This method is NO LONGER USED as of the latest fix.
+     * TrustFlowPay actually uses ALL response parameters (except HASH) for hash generation,
+     * not just a subset of 8 fields. See validate_hash() method for current implementation.
+     *
+     * This method is kept for reference/documentation purposes only.
+     *
+     * Original approach (INCORRECT):
      * Based on testing and common payment gateway patterns, use only core stable fields:
      * - Merchant/transaction identifiers: APP_ID, ORDER_ID, TXNTYPE
      * - Amount information: AMOUNT, CURRENCY_CODE
@@ -433,6 +439,8 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
      *
      * Excludes customer info (CUST_*), merchant descriptive fields (MERCHANT_*),
      * and additional metadata fields (CARD_MASK, PG_DESCRIPTOR, etc.)
+     *
+     * @deprecated No longer used - kept for reference only
      */
     protected function build_response_hash_params( $params ) {
         $hash_fields = array(
@@ -467,17 +475,27 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
      * @return bool
      */
     public function validate_hash( $params, $received_hash, $is_response = true ) {
-        // For responses, filter to only include hash-relevant fields
-        // For requests (status enquiry), use all provided fields
-        $hash_params = $is_response ? $this->build_response_hash_params( $params ) : $params;
+        // IMPORTANT: TrustFlowPay generates response hash using ALL response parameters
+        // except the HASH field itself. We must use all params, not a filtered subset.
+        $hash_params = $params;
+        unset( $hash_params['HASH'] );
+
+        // Also remove WooCommerce routing parameter if present
+        unset( $hash_params['wc-api'] );
+
+        // Log the fields being used for hash calculation
+        wc_trustflowpay_log( 'Hash validation using ' . count( $hash_params ) . ' fields: ' . implode( ', ', array_keys( $hash_params ) ), 'debug' );
 
         $calculated_hash = $this->generate_hash( $hash_params );
         $is_valid = hash_equals( $calculated_hash, $received_hash );
 
         if ( ! $is_valid ) {
-            wc_trustflowpay_log( 'HASH VALIDATION FAILED! Calculated: ' . substr( $calculated_hash, 0, 20 ) . '... | Received: ' . substr( $received_hash, 0, 20 ) . '...', 'error' );
+            wc_trustflowpay_log( 'HASH VALIDATION FAILED!', 'error' );
+            wc_trustflowpay_log( '  Calculated: ' . substr( $calculated_hash, 0, 40 ) . '...', 'error' );
+            wc_trustflowpay_log( '  Received:   ' . substr( $received_hash, 0, 40 ) . '...', 'error' );
+            wc_trustflowpay_log( '  Fields used (' . count( $hash_params ) . '): ' . implode( ', ', array_keys( $hash_params ) ), 'error' );
         } else {
-            wc_trustflowpay_log( 'Hash validation successful', 'debug' );
+            wc_trustflowpay_log( 'Hash validation successful using all response params', 'debug' );
         }
 
         return $is_valid;
