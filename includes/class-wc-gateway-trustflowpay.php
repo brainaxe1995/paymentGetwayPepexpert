@@ -754,21 +754,23 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
 
     /**
      * Get order by internal ORDER_ID
+     * Compatible with both traditional and HPOS (High-Performance Order Storage) methods
      */
     protected function get_order_by_internal_id( $internal_order_id ) {
-        global $wpdb;
+        // Use WooCommerce's built-in order query which handles both HPOS and traditional storage
+        $orders = wc_get_orders( array(
+            'limit'      => 1,
+            'meta_key'   => '_trustflowpay_order_id',
+            'meta_value' => $internal_order_id,
+            'return'     => 'objects',
+        ) );
 
-        $post_id = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_trustflowpay_order_id' AND meta_value = %s LIMIT 1",
-                $internal_order_id
-            )
-        );
-
-        if ( $post_id ) {
-            return wc_get_order( $post_id );
+        if ( ! empty( $orders ) && is_array( $orders ) ) {
+            wc_trustflowpay_log( 'Order found for ORDER_ID: ' . $internal_order_id . ' - WC Order #' . $orders[0]->get_id(), 'debug' );
+            return $orders[0];
         }
 
+        wc_trustflowpay_log( 'No order found with meta _trustflowpay_order_id = ' . $internal_order_id, 'debug' );
         return false;
     }
 
