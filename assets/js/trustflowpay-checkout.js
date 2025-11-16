@@ -91,70 +91,110 @@ jQuery(function($) {
     // Initialize
     tfpHandler.init();
 
-    // Override WooCommerce checkout submit handler for TrustFlowPay iframe mode
-    var originalSubmit = $.fn.wc_checkout_form.prototype.submit;
+    // Intercept WooCommerce checkout AJAX response for TrustFlowPay iframe mode
+    // This approach avoids the "Cannot read properties of undefined" error by not touching $.fn.wc_checkout_form
 
-    $.fn.wc_checkout_form.prototype.submit = function() {
-        var $form = $(this);
+    // Check if WooCommerce checkout form plugin is available
+    if ($.fn.wc_checkout_form && $.fn.wc_checkout_form.prototype) {
+        // Safely override the submit handler
+        var originalSubmit = $.fn.wc_checkout_form.prototype.submit;
 
-        // Check if TrustFlowPay is selected
-        var selectedPaymentMethod = $form.find('input[name="payment_method"]:checked').val();
+        $.fn.wc_checkout_form.prototype.submit = function() {
+            var selectedPaymentMethod = $('input[name="payment_method"]:checked').val();
 
-        if (selectedPaymentMethod === 'trustflowpay' && tfpCheckout.mode === 'iframe') {
-            // For iframe mode, we need to handle the response differently
-            var xhr = $.ajax({
-                type: $form.attr('method'),
-                url: $form.attr('action'),
-                data: $form.serialize(),
-                dataType: 'json',
-                success: function(result) {
-                    try {
-                        if (result.result === 'success') {
-                            if (result.trustflowpay_mode === 'iframe' && result.trustflowpay_params) {
-                                // Stay on checkout page and load iframe
-                                tfpHandler.loadIframe(result.trustflowpay_params);
+            // Only handle TrustFlowPay in iframe mode
+            if (selectedPaymentMethod === 'trustflowpay' && tfpCheckout.mode === 'iframe') {
+                var $form = $(this);
 
-                                // Scroll to payment section
+                // Make the AJAX request ourselves
+                $.ajax({
+                    type: $form.attr('method'),
+                    url: $form.attr('action'),
+                    data: $form.serialize(),
+                    dataType: 'json',
+                    success: function(result) {
+                        if (result.result === 'success' && result.trustflowpay_mode === 'iframe' && result.trustflowpay_params) {
+                            console.log('TrustFlowPay: Loading iframe mode checkout');
+
+                            // Load the payment form into iframe
+                            tfpHandler.loadIframe(result.trustflowpay_params);
+
+                            // Scroll to payment section
+                            setTimeout(function() {
                                 $('html, body').animate({
                                     scrollTop: $('#trustflowpay-iframe-wrapper').offset().top - 100
                                 }, 500);
+                            }, 300);
 
-                                // Unblock the checkout form
-                                $form.removeClass('processing').unblock();
-                            } else if (result.redirect) {
-                                // Redirect mode or other response
-                                window.location = result.redirect;
-                            }
-                        } else if (result.result === 'failure') {
-                            throw new Error('Payment failed');
-                        }
-                    } catch(err) {
-                        console.error('TrustFlowPay checkout error:', err);
-
-                        if (result.messages) {
-                            // Show error messages
+                            // Unblock the form
                             $form.removeClass('processing').unblock();
-                            $('.woocommerce-NoticeGroup-checkout, .woocommerce-error, .woocommerce-message').remove();
-                            $form.prepend('<div class="woocommerce-NoticeGroup woocommerce-NoticeGroup-checkout">' + result.messages + '</div>');
+                        } else if (result.redirect) {
+                            // Handle redirect mode or other responses
+                            window.location = result.redirect;
+                        } else {
+                            // Show error messages if present
+                            if (result.messages) {
+                                $('.woocommerce-NoticeGroup-checkout, .woocommerce-error, .woocommerce-message').remove();
+                                $form.prepend('<div class="woocommerce-NoticeGroup woocommerce-NoticeGroup-checkout">' + result.messages + '</div>');
+                            }
                             $form.removeClass('processing').unblock();
                             $('html, body').animate({
                                 scrollTop: ($form.offset().top - 100)
                             }, 1000);
                         }
+                    },
+                    error: function(jqXHR, textStatus, errorThrown) {
+                        console.error('TrustFlowPay AJAX error:', textStatus, errorThrown);
+                        $form.removeClass('processing').unblock();
                     }
-                },
-                error: function(jqXHR, textStatus, errorThrown) {
-                    console.error('TrustFlowPay AJAX error:', textStatus, errorThrown);
-                    $form.removeClass('processing').unblock();
-                }
-            });
+                });
 
-            return false;
-        }
+                return false; // Prevent default submission
+            }
 
-        // For other payment methods or redirect mode, use original handler
-        return originalSubmit.apply(this, arguments);
-    };
+            // For all other payment methods, use original handler
+            return originalSubmit.apply(this, arguments);
+        };
+    } else {
+        // Fallback: WooCommerce checkout form plugin not available
+        // Use AJAX event interception instead
+        console.warn('TrustFlowPay: wc_checkout_form not found, using fallback method');
+
+        $(document).ajaxSuccess(function(event, xhr, settings) {
+            // Only handle WooCommerce checkout AJAX requests
+            if (!settings.url || settings.url.indexOf('wc-ajax=checkout') === -1) {
+                return;
+            }
+
+            var result;
+            try {
+                result = JSON.parse(xhr.responseText);
+            } catch(e) {
+                return;
+            }
+
+            // Check if this is a successful TrustFlowPay iframe mode response
+            if (result && result.result === 'success' &&
+                result.trustflowpay_mode === 'iframe' &&
+                result.trustflowpay_params) {
+
+                console.log('TrustFlowPay: Detected iframe mode checkout success (fallback)');
+
+                // Load the payment form into iframe
+                tfpHandler.loadIframe(result.trustflowpay_params);
+
+                // Scroll to payment section
+                setTimeout(function() {
+                    $('html, body').animate({
+                        scrollTop: $('#trustflowpay-iframe-wrapper').offset().top - 100
+                    }, 500);
+                }, 300);
+
+                // Unblock the checkout form
+                $('form.checkout').removeClass('processing').unblock();
+            }
+        });
+    }
 
     // Listen for messages from TrustFlowPay iframe (for success/failure)
     window.addEventListener('message', function(event) {
