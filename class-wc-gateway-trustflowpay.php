@@ -308,8 +308,18 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
     public function handle_return() {
         wc_trustflowpay_log( 'Return URL handler called' );
 
-        $params = array_merge( $_POST, $_GET );
-        
+        // Use only the gateway's payload for hash validation, not WordPress query params
+        // TrustFlowPay should POST the result back
+        $params = $_POST;
+
+        if ( empty( $params ) ) {
+            // Fallback: maybe they used GET, but that's unlikely
+            $params = $_GET;
+        }
+
+        // Strip WordPress-specific parameters that aren't part of the gateway response
+        unset( $params['wc-api'] );
+
         if ( empty( $params ) ) {
             wc_add_notice( __( 'Payment response data missing.', 'trustflowpay-gateway' ), 'error' );
             wp_redirect( wc_get_checkout_url() );
@@ -522,20 +532,31 @@ class WC_Gateway_TrustFlowPay extends WC_Payment_Gateway {
             return array( 'error' => 'Invalid response from status enquiry API' );
         }
 
-        if ( isset( $data['HASH'] ) && ! $this->validate_hash( $data, $data['HASH'] ) ) {
+        // Handle both response formats: array of objects or single object
+        // Some TrustFlowPay responses may return: [{"APP_ID": "...", "ORDER_ID": "...", ...}, {"API_RESPONSE": "000"}]
+        // Others may return a single object: {"APP_ID": "...", "ORDER_ID": "...", ...}
+        if ( isset( $data[0] ) && is_array( $data[0] ) ) {
+            // Array of objects - first element is transaction data
+            $txn = $data[0];
+        } else {
+            // Single object
+            $txn = $data;
+        }
+
+        if ( isset( $txn['HASH'] ) && ! $this->validate_hash( $txn, $txn['HASH'] ) ) {
             wc_trustflowpay_log( 'Status Enquiry hash validation failed', 'error' );
             return array( 'error' => 'Hash validation failed' );
         }
 
-        $response_code = isset( $data['RESPONSE_CODE'] ) ? sanitize_text_field( $data['RESPONSE_CODE'] ) : '';
-        $status        = isset( $data['STATUS'] ) ? sanitize_text_field( $data['STATUS'] ) : '';
-        $txn_id_resp   = isset( $data['TXN_ID'] ) ? sanitize_text_field( $data['TXN_ID'] ) : '';
-        $pg_ref_num    = isset( $data['PG_REF_NUM'] ) ? sanitize_text_field( $data['PG_REF_NUM'] ) : '';
-        $response_msg  = isset( $data['RESPONSE_MESSAGE'] ) ? sanitize_text_field( $data['RESPONSE_MESSAGE'] ) : '';
+        $response_code = isset( $txn['RESPONSE_CODE'] ) ? sanitize_text_field( $txn['RESPONSE_CODE'] ) : '';
+        $status        = isset( $txn['STATUS'] ) ? sanitize_text_field( $txn['STATUS'] ) : '';
+        $txn_id_resp   = isset( $txn['TXN_ID'] ) ? sanitize_text_field( $txn['TXN_ID'] ) : '';
+        $pg_ref_num    = isset( $txn['PG_REF_NUM'] ) ? sanitize_text_field( $txn['PG_REF_NUM'] ) : '';
+        $response_msg  = isset( $txn['RESPONSE_MESSAGE'] ) ? sanitize_text_field( $txn['RESPONSE_MESSAGE'] ) : '';
 
-        $this->process_payment_response( $order, $response_code, $status, $txn_id_resp, $pg_ref_num, $response_msg, $data );
+        $this->process_payment_response( $order, $response_code, $status, $txn_id_resp, $pg_ref_num, $response_msg, $txn );
 
-        return $data;
+        return $txn;
     }
 
     public function add_order_action( $actions, $order ) {
